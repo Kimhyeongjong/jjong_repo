@@ -1,0 +1,185 @@
+내부 AgensGraph 상의 데이터 재생성 관련 쿼리 정리_0219
+
+1. linux 접속 root 계정
+2. agens 계정으로 변경
+su - agens 
+
+3. AgensGraph 접속 
+agens -U hynix -d hynixdb
+
+4. graph_path 확인 
+show graph_path;
+=> hynixgraph3
+
+
+5. graph 관련 정보 삭제
+DROP VLABEL org;
+DROP VLABEL activity;
+DROP ELABEL flow;
+DROP ELABEL set_activity;
+DROP ELABEL index;
+DROP ELABEL request_index;
+
+
+6. 조직 table(tb_org) 재생성
+
+DROP FOREIGN TABLE tb_org;
+
+CREATE FOREIGN TABLE tb_org(
+sector text,
+name text
+)SERVER import_server
+OPTIONS (ENCODING 'utf8', FORMAT 'csv', HEADER 'true', FILENAME '/home/agens/data/real/sample_org.csv');
+
+ 
+7. 조직 node(org) 생성 
+LOAD FROM tb_org AS a_org CREATE (p:org=to_jsonb(a_org));
+
+ 
+8. activity table(tb_activity) 재생성
+
+DROP FOREIGN TABLE tb_activity;
+
+CREATE FOREIGN TABLE tb_activity(
+group_name text,
+s_date text,
+activity_id text,
+kpi text,
+name text,
+priority text,
+vcm text,
+num text
+)SERVER import_server
+OPTIONS (ENCODING 'utf8', FORMAT 'csv', HEADER 'true', FILENAME '/home/agens/data/real/sample_activity.csv');
+
+ 
+9. activity node(activity) 생성
+LOAD FROM tb_activity AS a_activity CREATE (p:activity=to_jsonb(a_activity));
+
+
+10. set_activity edge 생성
+
+CREATE ELABEL set_activity;
+
+LOAD FROM tb_activity AS source
+MATCH (o:org),(a:activity)
+WHERE o.name = (source).group_name
+  AND a.activity_id = (source).activity_id
+CREATE (o)-[e:set_activity {label:current_date}]->(a);
+
+
+11. index table(tb_index) 생성
+ 
+DROP FOREIGN TABLE tb_index;
+ 
+CREATE FOREIGN TABLE tb_index(
+group_name text,
+s_date text,
+activity_id text,
+r_date text,
+index_n text,
+source_org text,
+goal text,
+condition text,
+result text,
+unit text,
+description text,
+target_id text
+)SERVER import_server
+OPTIONS (ENCODING 'utf8', FORMAT 'csv', HEADER 'true', FILENAME '/home/agens/data/real/sample_index.csv');
+
+  
+
+12. index edge 생성
+ 
+
+CREATE ELABEL index;
+
+LOAD FROM tb_index AS source
+MATCH (a1:activity),(a2:activity)
+WHERE a1.activity_id = (source).activity_id
+AND a2.activity_id = (source).target_id
+AND a1.activity_id <> a2.activity_id
+CREATE (a1)-[r:index {label:(source).index_n,c_date:(source).r_date,source_org:(source).source_org,goal:(source).goal,condition:(source).condition,result:(source).result,unit:(source).unit,description:(source).description}]->(a2);
+
+ 
+
+13. flow edge 생성>
+
+CREATE ELABEL flow;
+
+match (o1:org)-[s1:set_activity]->(a1:activity)-[i:index]->(a2:activity)<-[s2:set_activity]-(o2:org)
+where o1 <> o2
+  AND a1 <> a2
+with o1, o2, count(a1) as cnt, jsonb_agg(a1.activity_id) as activity_list
+create (o1)-[f:flow {'label':cnt, 'activity_list':activity_list}]->(o2);
+
+match (o1:org)-[f:flow]->(o2:org)
+set f += {status: 'normal'};
+
+match (o1:org)-[f:flow]->(o2:org), (o1)-[s1:set_activity]->(a1:activity)-[i:index]->(a2:activity)<-[s2:set_activity]-(o2)
+where i.goal > i.result
+set f.status = '"fail"';
+
+
+14. request_index table(tb_request_index) 생성
+DROP FOREIGN TABLE tb_request_index;
+
+CREATE FOREIGN TABLE tb_request_index(
+group_name text,
+s_date text,
+activity_id text,
+r_date text,
+index_n text,
+source_org text,
+goal text,
+condition text,
+result text,
+unit text,
+description text,
+target_id text
+)SERVER import_server
+OPTIONS (ENCODING 'utf8', FORMAT 'csv', HEADER 'true', FILENAME '/home/agens/data/real/sample_request_index.csv');
+
+
+15. requet_index edge 생성>
+
+CREATE ELABEL request_index;
+
+LOAD FROM tb_request_index AS source
+MATCH (o:org),(a:activity)
+WHERE a.activity_id = (source).activity_id
+  AND o.name = (source).source_org
+create (a)-[r:request_index {'label':(source).index_n, 'r_date':(source).r_date, 'goal':(source).goal}]->(o);
+
+ 
+ 
+
+<조회 쿼리>
+
+1. 조직 간 연결 관계(flow) 확인
+
+match p=(o1:org)-[f:flow]->(o2:org) return p;
+
+
+2. activity 간의 연결 관계 확인
+
+match g=(a1:activity)-[r:index]->(a2:activity) return g;
+
+
+3. activity의 value chain 값이 quality인 연결 케이스 조회
+
+MATCH p=(o1:org)-[s1:set_activity]->(a1:activity)-[i:index]->(a2:activity)<-[s2:set_activity]-(o2:org)
+
+WHERE a1.vcm = 'quality'
+
+  AND a2.vcm = 'quality'
+
+  AND a1 <> a2
+
+RETURN p;
+
+
+4. 모든 노드 및 연결 조회
+
+MATCH p=(o:org)-[s:set_activity]->(a:activity), g=(a1:activity)-[i:index]->(a2:activity), q=(a3:activity)-[r:request_index]->(o1:org), w=(o2:org)-[f:flow]->(o3:org) RETURN p,g,q,w;
