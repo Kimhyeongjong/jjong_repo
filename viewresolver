@@ -1,0 +1,14 @@
+  
+    @Bean
+    public ViewResolver getViewResolver() {
+
+        InternalResourceViewResolver viewResolver = new InternalResourceViewResolver();
+        
+        viewResolver.setViewClass(JstlView.class);
+        viewResolver.setPrefix("/WEB-INF/jsp/");
+        viewResolver.setSuffix(".jsp");
+        viewResolver.setContentType("text/html");
+        // Make sure > Thymeleaf order & FreeMarker order.
+        viewResolver.setOrder(1000);
+        return viewResolver;
+    }
